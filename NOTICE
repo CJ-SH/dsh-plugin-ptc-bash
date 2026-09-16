@@ -1,0 +1,59 @@
+本插件的预设与两个本地插件都是派生作品。派生过程可重跑（`tools/derive-preset.mjs`），
+改动点如下；各上游的许可全文见 `LICENSES/`。
+
+## presets/ptc-bash/agent.cordis.yml
+
+改编自 DeepSeek Harness 内置 `ptc` preset（MIT，Copyright (c) DeepSeek；许可全文见
+`LICENSES/deepseek-dsh-agent-presets-MIT.txt`）。相对原文只有三处改动：
+
+1. shell 区新增 `dsh-bash-win` 行（win32 的 Git Bash 工具）；
+2. identity 区新增 `workspace-instructions` 行（指令链进系统提示词）；
+3. 文件头注释重写。
+
+其余每一行逐字保留。
+
+## presets/ptc-bash/dsh-bash-win.mjs
+
+- 原始实现：xiaobright/dsh-anchored-standard 的 `combo-anchored/custom-bash.mjs`（MIT）。
+- 本文件的直接来源：`@linxin666/dsh-liangshen` 的同名文件（该包以 Apache-2.0 分发，许可全文见
+  `LICENSES/dsh-liangshen-Apache-2.0.txt`）。它随后在本仓库改名为 `dsh-bash-win.mjs`（加载行
+  id 同步改为 `dsh-bash-win`）。
+- 本包内的改动（Apache-2.0 第 4(b) 条要求的改动声明）：
+
+  1. 文件头注释重写；
+  2. `inject` 增加 `systemPrompt`；
+  3. 工具描述：首行加「本机首选 shell」，新增 `pwsh` 按需使用的条目，把三条与部署不符的条目
+     （「无网络访问」「apt/pip 镜像」「no landlock」）改写为准确描述，并补上后台运行与退出码标记的约定；
+  4. 新增 `tool:bash` 提示词段（order 取官方 `TOOL_BASH` 槽位）；
+  5. 参数集对齐官方 bash 工具：新增 `description`（必填）、`timeoutMs`（默认值与上限可配）、
+     `run_in_background`（后台任务注册到宿主 `ctx.jobs` 注册表，`job_output` / `job_list` / `job_kill` 可直接驱动）；
+  6. 结果渲染对齐官方：stdout → `[stderr]` 段 → `[output truncated; full output: <spill>]` /
+     `[timed out after Nms]` / `[killed by signal: S]` / `[exit code: N]` 标记；非零退出由「报错」改为
+     「报告」（只有参数非法、spawn 失败、工具调用被中止才是 isError）；
+  7. 相对的 `workdir` 现在按会话工作目录解析。
+
+- 保留未改动：Git Bash 探测顺序、显式 `bashPath`、`bash -c` 全新进程、输出上限与 spill 路径上报、
+  不静默降级到 pwsh/cmd、无沙箱升权（本工具在 Windows 上不受沙箱约束）。
+
+## presets/ptc-bash/workspace-instructions.mjs
+
+- 直接来源：`@linxin666/dsh-liangshen` 的 `minimal-prompt.mjs`（Apache-2.0，许可全文见
+  `LICENSES/dsh-liangshen-Apache-2.0.txt`）；其工作区指令注入形状与实验结论沿用
+  xiaobright/dsh-anchored-standard（MIT）。
+- 本包内的改动：
+
+  1. 删除系统提示词段落裁剪——官方段落全部保留，只在末尾追加 `workspace-instructions` 段；
+  2. 删除 `instructionSource: 'hint'` 模式与其消息逻辑；
+  3. 删除向 persona 追加工作目录行的调用（官方 persona 已经渲染该行）；
+  4. 文件头注释重写。
+
+- 保留：基线指令发现与渲染、官方 `dsh-agent-instructions` 注入的标记消息替换、动态子目录
+  指令投递、字节预算与失败降级。文件中少量不再被引用的上游常量/辅助函数（如
+  `PTC_SECTION_NAMES`、`instructionHintMessages`）刻意保留以便与上游对照，它们不参与任何行为。
+
+## 分发前待办
+
+- xiaobright/dsh-anchored-standard 的 MIT 许可全文未随本仓库分发（上游是 GitHub 仓库，本机没有
+  该文件）；对外发布前请取来放进 `LICENSES/`，并保留其版权声明。
+- `@linxin666/dsh-liangshen` 以 Apache-2.0 分发：本仓库已附带许可全文与改动声明。该包内没有
+  NOTICE 文件（只有其 preset 目录里的一份 NOTICE，已在本文件与 README 中致谢），发布前建议再核对一次。

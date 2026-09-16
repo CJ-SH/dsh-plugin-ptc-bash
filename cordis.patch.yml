@@ -1,0 +1,10 @@
+# dsh-plugin-ptc-bash bundle patch: one new loader row.
+#
+# The row's host half keeps this package's `presets/ptc-bash/**` in step with
+# `$DSH_HOME/.agent-presets/ptc-bash/` — the harness-home user root the
+# agent-presets roster already scans — so the preset becomes selectable in the
+# preset picker without any manual copy. The plugin holds no configuration and
+# touches no other bundle's row.
+- insert:
+    - id: dsh-plugin-ptc-bash
+      name: 'dsh-plugin-ptc-bash'

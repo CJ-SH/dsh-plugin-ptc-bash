@@ -1,0 +1,3 @@
+name: PTC + Bash 模式
+description: 官方 PTC 模式为底座：Windows 上以 Git Bash 为首选 shell（保留 pwsh 备用），并把 AGENTS.md 指令链放进系统提示词。
+order: 5
