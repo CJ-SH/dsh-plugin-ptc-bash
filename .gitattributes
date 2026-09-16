@@ -1,0 +1,4 @@
+# Keep every text file LF in the working tree on every platform: the preset
+# composition is consumed as bytes (derivation, sync to the discovery root) and
+# the tests compare its text, so CRLF checkouts would drift from the repository.
+* text=auto eol=lf

@@ -7,7 +7,7 @@ import { validateComposition } from '../lib/index.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const presetDir = join(root, 'presets', 'ptc-bash')
-const composition = await readFile(join(presetDir, 'agent.cordis.yml'), 'utf8')
+const composition = (await readFile(join(presetDir, 'agent.cordis.yml'), 'utf8')).replace(/\r\n/g, '\n')
 
 const SHIPPED_IDS = ['minimal', 'standard', 'ptc', 'cordis']
 const OFFICIAL_TOP_LEVEL_ROWS = [
