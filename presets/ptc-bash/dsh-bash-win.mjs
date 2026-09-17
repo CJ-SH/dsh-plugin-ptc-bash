@@ -32,6 +32,14 @@
  * fallback to pwsh/cmd. The PATH fallback may pick the WSL shim, still bash but
  * with /mnt/... paths - the Git Bash roots are probed first for that reason.
  *
+ * Shell environment: the subprocess service scrubs every ambient `DSH_*` name, so the
+ * per-execution dsh facts (`DSH_SESSION_ID`, `DSH_SHELL`, `DSH_HOME`, contributor
+ * variables) are read from `ctx.shellEnv.collect(exec)` and passed as the spawn spec's
+ * explicit `env` - the one channel that survives that scrub (the official
+ * `dsh-tool-bash` / `dsh-tool-pwsh` rows do the same). Without it, work run inside this
+ * shell cannot tell which dsh session it belongs to, and Trellis' `task.py` falls back to
+ * its degraded mode (status/branch recorded, per-session pointer never written).
+ *
  * Known gap vs. the official bash tool: no `sandbox_permissions` escalation (this
  * shell is not confined on Windows, and the harness file sandbox covers the
  * other file tools, not this shell).
@@ -43,8 +51,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'dsh-bash-win'
 
-/** The subprocess, tools and system-prompt services must exist before this plugin applies. */
-export const inject = ['subprocess', 'tools', 'systemPrompt']
+/** The subprocess, tools, system-prompt and shell-env services must exist before this plugin applies. */
+export const inject = ['subprocess', 'tools', 'systemPrompt', 'shellEnv']
 
 const DEFAULT_TIMEOUT_MS = 120000
 const DEFAULT_MAX_TIMEOUT_MS = 600000
@@ -91,6 +99,28 @@ function validateArgs(args) {
   if (args?.timeoutMs !== undefined && (!Number.isFinite(args.timeoutMs) || args.timeoutMs <= 0)) throw new Error('invalid timeoutMs: expected a positive number, got ' + JSON.stringify(args.timeoutMs))
   if (args?.workdir !== undefined && (typeof args.workdir !== 'string' || args.workdir.length === 0)) throw new Error('invalid workdir: expected a non-empty string')
   if (args?.run_in_background !== undefined && typeof args.run_in_background !== 'boolean') throw new Error('invalid run_in_background: expected a boolean')
+}
+
+/**
+ * The `DSH_*` facts for THIS execution, or undefined when the registry cannot supply them.
+ *
+ * `collect` is resolved per execution, so the session id it carries is the session running
+ * this call (the session itself, or the sub-agent session when a sub-agent drives the shell).
+ * The subprocess service strips ambient `DSH_*` names, which makes this overlay the only
+ * channel those facts can reach the child through. A registry that is missing, throws, or
+ * yields nothing degrades to "no overlay": the shell has to keep working when the
+ * environment facts are unavailable.
+ */
+function collectShellEnv(ctx, exec) {
+  try {
+    const registry = ctx.shellEnv
+    if (registry === undefined || typeof registry.collect !== 'function') return undefined
+    const overlay = registry.collect(exec)
+    if (overlay === null || typeof overlay !== 'object') return undefined
+    return Object.keys(overlay).length === 0 ? undefined : overlay
+  } catch {
+    return undefined
+  }
 }
 
 /** Append one line block to a body, keeping a single newline between them. */
@@ -255,6 +285,7 @@ export function apply(ctx, config) {
       validateArgs(args)
       const shell = await resolveShell(exec?.signal)
       const workdir = resolveWorkdir(args.workdir, exec)
+      const shellEnv = collectShellEnv(ctx, exec)
       const stdio = {
         stdin: 'ignore',
         stdout: { maxBytes: maxOutputBytes },
@@ -265,6 +296,7 @@ export function apply(ctx, config) {
         ...(workdir !== undefined ? { cwd: workdir } : {}),
         stdio,
         graceMs: GRACE_MS,
+        ...(shellEnv !== undefined ? { env: shellEnv } : {}),
         ...(signal !== undefined ? { signal } : {}),
       })
 

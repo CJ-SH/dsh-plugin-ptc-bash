@@ -75,6 +75,11 @@ function makeCtx(options = {}) {
       section: (section) => sections.push(section),
       getSectionOrder: (name) => (name === 'TOOL_BASH' ? 1000 : undefined),
     },
+    // The real composition always injects `shellEnv`; passing `shellEnv: null` models a
+    // deployment without that service, which must degrade to "no overlay".
+    ...(options.shellEnv === null
+      ? {}
+      : { shellEnv: options.shellEnv ?? { collect: () => ({ DSH_HOME: 'C:/Users/x/.dsh', DSH_SHELL: '1', DSH_SESSION_ID: 'session-test' }) } }),
     get: (name) => (name === 'jobs' ? options.jobs : undefined),
   }
   return { ctx, registered, sections, spawns }
@@ -137,6 +142,51 @@ describe('dsh-bash-win', () => {
     assert.equal(spawns[0].spec.cwd, 'D:/ws')
     assert.equal(spawns[0].spec.stdio.stdout.maxBytes, 4096)
     assert.equal(spawns[0].spec.graceMs, 3000)
+  })
+
+  it('declares the shell-env service so per-execution DSH_* facts are reachable', () => {
+    assert.ok(bashWin.inject.includes('shellEnv'))
+  })
+
+  it('passes the current execution DSH_* overlay through the spawn spec', async () => {
+    const overlay = { DSH_HOME: 'C:/Users/x/.dsh', DSH_SHELL: '1', DSH_SESSION_ID: 'session-abc' }
+    const calls = []
+    const { ctx, registered, spawns } = makeCtx({ shellEnv: { collect: (current) => { calls.push(current); return overlay } } })
+    bashWin.apply(ctx, {})
+    const execCtx = exec('D:/ws')
+    await registered[0].execute({ command: 'echo hi', description: 'Echo hi' }, execCtx)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0], execCtx, 'collect receives this execution, not a placeholder')
+    assert.deepEqual(spawns[0].spec.env, overlay)
+    assert.deepEqual(spawns[0].spec.argv.slice(1), ['-c', 'echo hi'])
+    assert.equal(spawns[0].spec.cwd, 'D:/ws')
+  })
+
+  it('carries the same overlay into a background job', async () => {
+    const jobs = backgroundJobs()
+    const overlay = { DSH_SHELL: '1', DSH_SESSION_ID: 'session-bg' }
+    const { ctx, registered, spawns } = makeCtx({ jobs, shellEnv: { collect: () => overlay } })
+    bashWin.apply(ctx, {})
+    await registered[0].execute({ command: 'npm test', description: 'Run tests', run_in_background: true }, exec())
+    jobs.started[0].run()
+    assert.equal(spawns.length, 1)
+    assert.deepEqual(spawns[0].spec.env, overlay)
+  })
+
+  it('omits env - and still runs the command - when the overlay is unavailable', async () => {
+    const cases = [
+      ['no shell-env service', null],
+      ['collect throws', { collect: () => { throw new Error('registry exploded') } }],
+      ['empty overlay', { collect: () => ({}) }],
+      ['non-object overlay', { collect: () => 'nope' }],
+    ]
+    for (const [label, shellEnv] of cases) {
+      const { ctx, registered, spawns } = makeCtx({ shellEnv })
+      bashWin.apply(ctx, {})
+      const value = await registered[0].execute({ command: 'echo hi', description: 'Echo hi' }, exec())
+      assert.equal(value.text, 'hello', label + ': shell still runs')
+      assert.equal(Object.hasOwn(spawns[0].spec, 'env'), false, label + ': no env key')
+    }
   })
 
   it('reports a non-zero exit as a marker instead of an error', async () => {

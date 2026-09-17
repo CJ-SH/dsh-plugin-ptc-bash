@@ -38,6 +38,12 @@ node --check presets/ptc-bash/workspace-instructions.mjs
 新会话里的手工验收：`bash` 能跑 `uname -s` / `git --version` / `pwd`；非零退出带输出回报；
 普通命令走 `bash` 而非 `pwsh`；首个回合即为 PTC（工具面只有 `run_code` + SDK）。
 
+会话身份（`DSH_*`）验收，同样要在**新会话**里经 `bash` 工具执行：
+
+```sh
+env | grep '^DSH_'        # 期望：DSH_HOME / DSH_SESSION_ID=session-<本会话> / DSH_SHELL=1
+```
+
 ## 迭代注意
 
 - **改 `.mjs` 不触发预设重挂**：挂载代际只以 `presets/ptc-bash/agent.cordis.yml` 的 mtime+size 为键。
@@ -72,6 +78,23 @@ rm -rf "$DSH_HOME/.agent-presets/ptc-bash"            # 清理同步产物
 结果文本：stdout → `[stderr]` 段 → `[output truncated; full output: <path>]` / `[timed out after Nms]` / `[killed by signal: S]` /
 `[exit code: N]` 标记。非零退出是「报告」而不是错误结果；只有参数非法、spawn 失败、工具调用被中止才是 isError。
 后台任务注册到宿主 `ctx.jobs` 注册表，用 `job_output` / `job_list` / `job_kill` 驱动（需要 `dsh-jobs` 与 `dsh-tool-jobs` 已装载，预设里本来就带 `tool-jobs`）。
+
+### 会话身份（DSH_*）
+
+工具声明 `inject: ['subprocess', 'tools', 'systemPrompt', 'shellEnv']`，并在每次调用时把
+**本次执行**的 dsh shell 环境事实（`ctx.shellEnv.collect(exec)`：`DSH_SESSION_ID` / `DSH_SHELL` / `DSH_HOME`
++ 贡献者变量）作为 spawn spec 的显式 `env` 传给 Git Bash。
+
+为什么必须这么做：`@deepseek-ai/dsh-subprocess` 会**主动剥掉 ambient 环境里所有 `DSH_*`**（Windows 名字大小写不敏感，
+避免"当前 DSH_* 事实"被隐式继承），spawn spec 的 `env` 是唯一受支持的注入通道；官方 `dsh-tool-bash` / `dsh-tool-pwsh`
+用的正是同一条路径。
+
+影响：任何在**本 bash 工具**里跑的子进程都能拿到当前 dsh 会话 id。对 Trellis 工作区而言，这意味着
+`python ./.trellis/scripts/task.py create|start` 不再进入降级模式，会正常写
+`.trellis/.runtime/sessions/dsh_session-<id>.json` 会话指针（dsh 的 `statusline` 之类消费者依赖它）。
+注册表缺失 / 抛错 / 返回空时归一为"不注入"，shell 照常工作（`test/plugins.test.mjs` 覆盖这三种降级）。
+
+注意生效时机：预设模块在**会话挂载时**加载，因此改动只对改动后**新开的会话**生效；老会话沿用旧模块。
 
 ## 派生脚本（不是黑箱）
 
