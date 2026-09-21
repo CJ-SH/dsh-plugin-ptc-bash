@@ -30,6 +30,7 @@ const OFFICIAL_TOP_LEVEL_ROWS = [
   'tool-web',
   'tool-presentation',
   'present',
+  'tool-plugin-manager',
 ]
 
 function topLevelIds(text) {
@@ -71,6 +72,23 @@ describe('presets/ptc-bash', () => {
   it('routes workspace instructions through the system prompt', () => {
     assert.match(composition, /- id: workspace-instructions\n  name: \.\/workspace-instructions\.mjs\n  config:\n    instructionMaxBytes: 65536\n/)
     assert.match(composition, /- id: agent-instructions\n  name: '@deepseek-ai\/dsh-agent-instructions'\n  config:\n    maxBytes: 65536\n/)
+  })
+
+  it('names the 0.1.6 engine package and nothing that no longer exists', () => {
+    assert.match(composition, /^    - id: workflow-ptc\n^      name: '@deepseek-ai\/dsh-workflow-ptc'$/m)
+    // 0.1.6 removed dsh-workflow-worker-thread (renamed to dsh-workflow-ptc) and
+    // never shipped a dsh-tool-ptc; a row naming either one fails the mount.
+    assert.ok(!composition.includes('workflow-worker-thread'))
+    assert.ok(!composition.includes('dsh-tool-ptc'))
+  })
+
+  it('keeps the orchestration rows disabled exactly as upstream ptc does', () => {
+    // The comment lines between `name` and `disabled` travel with the row, so
+    // the assertions tolerate them rather than pinning the prose.
+    assert.match(composition, /^    - id: workflow-ptc\n^      name: '@deepseek-ai\/dsh-workflow-ptc'\n(?:^      #.*\n)*^      disabled: true$/m)
+    assert.match(composition, /^    - id: tool-workflow\n^      name: '@deepseek-ai\/dsh-tool-workflow'\n(?:^      #.*\n)*^      disabled: true$/m)
+    assert.match(composition, /^    - id: tool-ralph\n^      name: '@deepseek-ai\/dsh-tool-ralph'\n(?:^      #.*\n)*^      disabled: true$/m)
+    assert.match(composition, /^- id: tool-plugin-manager\n  name: '@deepseek-ai\/dsh-plugin-manager\/tools'\n  disabled: true$/m)
   })
 
   it('passes the roster structural contract', () => {

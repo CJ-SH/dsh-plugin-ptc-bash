@@ -87,6 +87,23 @@ describe('syncPresets', () => {
     assert.equal(await readFile(join(targetRoot, 'agent.cordis.yml'), 'utf8'), composition)
   })
 
+  it('refuses a composition whose name scalar never closes its quote', async () => {
+    const { sourceRoot, targetRoot } = await fixture()
+    await syncPresets({ sourceRoot, targetRoot })
+    const composition = await readFile(join(targetRoot, 'agent.cordis.yml'), 'utf8')
+    // The hand edit this guard exists for: `name: '@deepseek-ai/dsh-tool-ptc`
+    // swallowed every following line and made the whole composition unreadable.
+    await writeFile(
+      join(sourceRoot, 'agent.cordis.yml'),
+      COMPOSITION.replace("name: '@deepseek-ai/dsh-persona'", "name: '@deepseek-ai/dsh-persona"),
+    )
+    const result = await syncPresets({ sourceRoot, targetRoot })
+    assert.equal(result.failed.length, 1)
+    assert.match(result.failed[0].reason, /never closes it/)
+    assert.deepEqual(result.copied, [])
+    assert.equal(await readFile(join(targetRoot, 'agent.cordis.yml'), 'utf8'), composition)
+  })
+
   it('never touches a sibling preset', async () => {
     const { sourceRoot, targetBase, targetRoot } = await fixture()
     await syncPresets({ sourceRoot, targetRoot })
@@ -106,5 +123,30 @@ describe('validateComposition', () => {
     assert.match(validateComposition('- id: persona\n')[0], /no two-space-indented name/)
     assert.match(validateComposition(COMPOSITION + '- id: persona\n  name: ./x.mjs\n').join(' '), /duplicate row id/)
     assert.match(validateComposition('- id: persona\n  name: pwsh\n')[0], /not a mountable specifier/)
+  })
+
+  it('reports a name scalar that opens a quote and never closes it', () => {
+    const broken = COMPOSITION.replace("name: '@deepseek-ai/dsh-persona'", "name: '@deepseek-ai/dsh-persona")
+    const problems = validateComposition(broken)
+    assert.match(problems[0], /^line 2: name scalar "'@deepseek-ai\/dsh-persona" opens with a single quote but never closes it$/)
+    // The row-level check reads the same value and finds no mountable prefix, so
+    // an unclosed quote is reported on both counts.
+    assert.match(problems.join('\n'), /row "persona".*is not a mountable specifier/)
+  })
+
+  it('reports a stray quote in an unquoted name scalar, at any depth', () => {
+    const stray = COMPOSITION.replace('  name: ./custom-bash.mjs', "  name: ./custom-bash.mjs'")
+    assert.match(validateComposition(stray)[0], /carries a single quote in an unquoted scalar/)
+    const nested = [
+      '- id: delegation',
+      '  name: cordis:group',
+      '  config:',
+      '    - id: custom-bash',
+      "      name: './custom-bash.mjs",
+      '',
+    ].join('\n')
+    const problems = validateComposition(nested)
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /^line 5: name scalar .* never closes it$/)
   })
 })

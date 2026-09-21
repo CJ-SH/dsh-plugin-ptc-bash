@@ -17,6 +17,8 @@
 | `tool-pwsh` | 官方行：win32 的 pwsh，**保留为备用 shell** |
 | `dsh-bash-win`（新增） | win32 的 Git Bash `bash` 工具（首选 shell）；参数集对齐官方（`description`/`timeoutMs`/`run_in_background`），后台任务用 `job_output`/`job_kill` 收集 |
 | `workspace-instructions`（新增） | AGENTS.md/CLAUDE.md 指令链进系统提示词；官方 `agent-instructions` 的重复注入被替换为标记消息 |
+| `workflow-ptc` / `tool-workflow` / `tool-ralph` | 官方行：编排引擎与它的两个消费方（`workflow` 扇出脚本、`ralph` 全新 agent 迭代）。官方 0.1.6 在 `ptc` 里默认**三行全禁用**——PTC 模式的编排面只有 `run_code` + subagent 工具——本预设跟随上游，不额外保留 ralph |
+| `tool-plugin-manager` | 官方行：模型侧 `plugin_manager`（可改 profile 插件与组合包，官方默认 `disabled`），本预设跟随上游 |
 | 其余行 | 与官方 `ptc` 逐字一致（含 `tool-presentation` `mode: ptc` → 首回合即 PTC、`/goal`、`web_fetch`、subagent 模型选择等） |
 
 ## 安装
@@ -29,11 +31,13 @@ dsh plugin --profile web add <本包目录或 git URL>
 ## 验证
 
 ```sh
-npm test                       # 同步幂等 / 组合结构 / 插件行为
+npm test                       # 同步幂等 / 组合结构 / 插件行为 / 组合健康（装机 harness 判定）
 node --check lib/index.js
 node --check presets/ptc-bash/dsh-bash-win.mjs
 node --check presets/ptc-bash/workspace-instructions.mjs
 ```
+
+`test/composition-health.test.mjs` 不自己实现判定：它调用**装机 harness 的预设发现 API**，读它给出的 `broken` 原因（这份组合能否解析、每个启用行的 `name` 能否解析到装机里的包），并对照随包 `ptc` 做结构 diff。找不到装机 harness 时这些用例 **skip** 而不是失败，其余用例照常运行。
 
 新会话里的手工验收：`bash` 能跑 `uname -s` / `git --version` / `pwd`；非零退出带输出回报；
 普通命令走 `bash` 而非 `pwsh`；首个回合即为 PTC（工具面只有 `run_code` + SDK）。
@@ -46,6 +50,10 @@ env | grep '^DSH_'        # 期望：DSH_HOME / DSH_SESSION_ID=session-<本会�
 
 ## 迭代注意
 
+- **升级 dsh 后先重派生，再跑测试**：`npm run derive-preset` 按装机官方 `ptc` 重写组合（把上游改名与
+  默认值一起带过来），随后 `npm test`。上游把某个包改名/删掉导致的行失效，由
+  `test/composition-health.test.mjs` 在测试阶段拦下，而不是等到会话挂载失败；`lib/index.js` 的
+  组合校验也会拒绝把写坏的组合同步进 `$DSH_HOME/.agent-presets`。
 - **改 `.mjs` 不触发预设重挂**：挂载代际只以 `presets/ptc-bash/agent.cordis.yml` 的 mtime+size 为键。
   改完插件文件后把插件重新挂载：重启 `dsh web`，或 `touch presets/ptc-bash/agent.cordis.yml` 后重启
   （同步只在新宿主启动时运行）。
