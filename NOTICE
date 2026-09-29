@@ -3,14 +3,20 @@
 
 ## presets/ptc-bash/agent.cordis.yml
 
-改编自 DeepSeek Harness 内置 `ptc` preset（MIT，Copyright (c) DeepSeek；许可全文见
-`LICENSES/deepseek-dsh-agent-presets-MIT.txt`）。相对原文只有三处改动：
+改编自 DeepSeek Harness 随包的 `ptc` agent preset（MIT，Copyright (c) DeepSeek；许可全文见
+`LICENSES/deepseek-dsh-agent-presets-MIT.txt`）。0.2.0-rc.1 起该 preset 由
+`@deepseek-ai/dsh-web-app` 的 `presets/ptc.patch.yml`（`insert[0].config.plugins`）随包分发，
+0.1.x 的 `@deepseek-ai/dsh-agent-presets` 包已不存在；`tools/derive-preset.mjs` 的锚点已随之改为
+该 patch 的 `plugins:` 列表。相对原文只有三处改动：
 
 1. shell 区新增 `dsh-bash-win` 行（win32 的 Git Bash 工具）；
 2. identity 区新增 `workspace-instructions` 行（指令链进系统提示词）；
 3. 文件头注释重写。
 
 其余每一行逐字保留。
+
+注：上游那份 patch 是宿主自己 dump 的 YAML，不带注释，所以**重派生会把本文件里的说明性注释换成纯行表**
+（行内容与当前仓库逐行相同）。`tools/derive-preset.mjs` 的头部注释说明了这一点。
 
 ## presets/ptc-bash/dsh-bash-win.mjs
 

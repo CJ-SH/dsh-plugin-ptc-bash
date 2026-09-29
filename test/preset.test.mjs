@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
-import { validateComposition } from '../lib/index.js'
+import { parseComposition, validateComposition } from '../lib/index.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const presetDir = join(root, 'presets', 'ptc-bash')
@@ -53,7 +53,11 @@ function expectedRoster() {
 
 describe('presets/ptc-bash', () => {
   it('is the official ptc roster plus exactly two rows', () => {
-    assert.deepEqual(topLevelIds(composition), expectedRoster())
+    const expected = expectedRoster()
+    // Read from the text, so a reader that lost a row cannot make this agree with itself,
+    // and from the parser, so a row the reader cannot see is named here as well.
+    assert.deepEqual(topLevelIds(composition), expected)
+    assert.deepEqual(parseComposition(composition).map((row) => row.id), expected)
   })
 
   it('keeps the official shell gates and adds the win32 Git Bash row', () => {
@@ -74,10 +78,12 @@ describe('presets/ptc-bash', () => {
     assert.match(composition, /- id: agent-instructions\n  name: '@deepseek-ai\/dsh-agent-instructions'\n  config:\n    maxBytes: 65536\n/)
   })
 
-  it('names the 0.1.6 engine package and nothing that no longer exists', () => {
+  it('names the current engine package and nothing this preset has outlived', () => {
     assert.match(composition, /^    - id: workflow-ptc\n^      name: '@deepseek-ai\/dsh-workflow-ptc'$/m)
-    // 0.1.6 removed dsh-workflow-worker-thread (renamed to dsh-workflow-ptc) and
-    // never shipped a dsh-tool-ptc; a row naming either one fails the mount.
+    // 0.1.6 removed dsh-workflow-worker-thread (renamed to dsh-workflow-ptc) and never
+    // shipped a dsh-tool-ptc; a row naming either one fails the mount. The lookup that
+    // proves the names still resolve lives in test/composition-health.test.mjs — this is
+    // only the text half, and it cannot tell a rename from a typo.
     assert.ok(!composition.includes('workflow-worker-thread'))
     assert.ok(!composition.includes('dsh-tool-ptc'))
   })
@@ -95,7 +101,7 @@ describe('presets/ptc-bash', () => {
     assert.deepEqual(validateComposition(composition), [])
   })
 
-  it('is a preset id the roster can discover', async () => {
+  it('publishes the id and display fields the registry registers', async () => {
     const preset = await readFile(join(presetDir, 'preset.yml'), 'utf8')
     const name = /^name:\s*(.+)$/m.exec(preset)
     const description = /^description:\s*(.+)$/m.exec(preset)
@@ -104,6 +110,8 @@ describe('presets/ptc-bash', () => {
     assert.ok(description !== null && description[1].trim().length > 0)
     assert.equal(order[1], '5')
     assert.match('ptc-bash', /^[a-z0-9][a-z0-9-]*$/)
+    // The registry refuses a duplicate id outright, so this preset's id must not be one
+    // the deployment already ships.
     assert.ok(!SHIPPED_IDS.includes('ptc-bash'))
   })
 })

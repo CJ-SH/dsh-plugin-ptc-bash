@@ -1,3 +1,16 @@
+This is the MIT licence text of the DeepSeek Harness `ptc` agent preset that
+presets/ptc-bash/agent.cordis.yml is adapted from.
+
+dsh 0.2.0-rc.1 ships that preset as `presets/ptc.patch.yml`
+(`insert[0].config.plugins`) inside the package `@deepseek-ai/dsh-web-app`.
+It replaced the `@deepseek-ai/dsh-agent-presets` package, which no longer exists;
+this file's name is kept so older references resolve, not because that package
+still ships anything.
+
+The licence text below is unchanged.
+
+--------------------------------------------------------------------------------
+
 MIT License
 
 Copyright (c) 2026 DeepSeek

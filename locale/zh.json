@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "PTC + Bash 预设",
+    "description": "声明 `ptc-bash` agent preset：官方 PTC 模式为底座，Windows 上以 Git Bash 为首选 shell，并把 AGENTS.md 指令链放进系统提示词。"
+  }
+}

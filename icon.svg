@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="PTC + Bash preset">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#2f6df6"/>
+  <path d="M14 20l12 10-12 10" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M32 44h18" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+</svg>

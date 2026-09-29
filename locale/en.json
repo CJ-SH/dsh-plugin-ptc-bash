@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "PTC + Bash preset",
+    "description": "Declares the `ptc-bash` agent preset: the official PTC mode with Git Bash as the preferred shell on Windows and the AGENTS.md chain in the system prompt."
+  }
+}

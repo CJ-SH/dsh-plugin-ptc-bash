@@ -4,18 +4,22 @@
   "description": "Agent preset package: the official PTC preset with Git Bash as the preferred shell on Windows and workspace instructions carried in the system prompt.",
   "type": "module",
   "main": "lib/index.js",
+  "icon": "./icon.svg",
   "exports": {
     ".": "./lib/index.js",
     "./presets/*": "./presets/*",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
+    "locale/*.json",
     "LICENSES",
     "NOTICE",
     "tools",
     "presets",
     "cordis.patch.yml",
+    "icon.svg",
     "LICENSE",
     "README.md"
   ],
@@ -37,6 +41,13 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/CJ-SH/dsh-plugin-ptc-bash.git"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "^0.2.0-rc.1"
+  },
+  "meta": {
+    "title": "PTC + Bash preset",
+    "description": "Declares the `ptc-bash` agent preset: the official PTC mode with Git Bash as the preferred shell on Windows and the AGENTS.md chain in the system prompt."
   },
   "scripts": {
     "derive-preset": "node tools/derive-preset.mjs",
