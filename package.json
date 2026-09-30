@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-ptc-bash",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent preset package: the official PTC preset with Git Bash as the preferred shell on Windows and workspace instructions carried in the system prompt.",
   "type": "module",
   "main": "lib/index.js",
