@@ -21,7 +21,9 @@
     "cordis.patch.yml",
     "icon.svg",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "README.zh.md",
+    "docs"
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

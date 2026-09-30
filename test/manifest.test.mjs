@@ -20,7 +20,7 @@ const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'u
 const claimed = [manifest.main, manifest.icon, manifest.dsh?.bundle?.patch, ...manifest.files, ...Object.values(manifest.exports)]
 
 /** The entries `files` ships as whole directories rather than as one file. */
-const directories = new Set(['lib', 'presets', 'tools', 'LICENSES'])
+const directories = new Set(['lib', 'presets', 'tools', 'LICENSES', 'docs'])
 
 /** One claimed path has to name something, whether it is a file, a directory or a glob. */
 async function assertClaimed(entry) {
