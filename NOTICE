@@ -37,9 +37,17 @@
      `[timed out after Nms]` / `[killed by signal: S]` / `[exit code: N]` 标记；非零退出由「报错」改为
      「报告」（只有参数非法、spawn 失败、工具调用被中止才是 isError）；
   7. 相对的 `workdir` 现在按会话工作目录解析。
+  8. 执行模型由「每次调用 `bash -c`」改为「每会话一个持久 `bash -s`」：新增会话串行队列、shell 生命周期
+     （启动握手、超时/中断/`exit` 后重建、`agent/disposed` 清理）与 heredoc 帧协议；该帧协议重写自
+     `@linxin666/dsh-win-bash`（同一 Apache-2.0 许可，版权归 @linxin666）；
+  9. 新增会话沙箱门禁：调用前读会话自身的 `sandboxPolicy.resolve({ session }).mode`，非 `danger-full-access`
+     直接 `SANDBOX_UNSUPPORTED` 拒绝且不 spawn；
+  10. 结果新增结构化字段（`stdout` / `stderr` / `exitCode` / `timedOut` / 截断事实 / spill 路径）；
+  11. `workdir` 由 spawn 的 `cwd` 改为写进持久 shell 的 `cd -- <dir>`（会改变后续调用的起始目录）；
+  12. 可见输出改为「保留尾部」，与 subprocess collector 的内存尾部语义一致。
 
-- 保留未改动：Git Bash 探测顺序、显式 `bashPath`、`bash -c` 全新进程、输出上限与 spill 路径上报、
-  不静默降级到 pwsh/cmd、无沙箱升权（本工具在 Windows 上不受沙箱约束）。
+- 保留未改动：Git Bash 探测顺序、显式 `bashPath`、输出上限与 spill 路径上报、不静默降级到 pwsh/cmd、
+  无沙箱升权（本工具在 Windows 上不受文件沙箱约束，因此只在 `danger-full-access` 会话里提供服务）。
 
 ## presets/ptc-bash/workspace-instructions.mjs
 
@@ -50,7 +58,7 @@
 
   1. 删除系统提示词段落裁剪——官方段落全部保留，只在末尾追加 `workspace-instructions` 段；
   2. 删除 `instructionSource: 'hint'` 模式与其消息逻辑；
-  3. 删除向 persona 追加工作目录行的调用（官方 persona 已经渲染该行）；
+  3. 删除向 persona 追加工作目录行的调用（当前目录由 `working-directory` 服务作为必选运行时上下文提供）；
   4. 文件头注释重写。
 
 - 保留：基线指令发现与渲染、官方 `dsh-agent-instructions` 注入的标记消息替换、动态子目录

@@ -8,6 +8,9 @@ English | [中文](README.zh.md)
 
 - **PTC from the first turn**: built on the official PTC preset, the tool surface is only `run_code` and the subagent tools.
 - **Git Bash first on Windows**: adds a `dsh-bash-win` row whose parameter set matches the official `bash` (`description` / `timeoutMs` / `run_in_background`).
+- **A persistent shell per session**: `cd`, exported variables, functions and aliases survive across calls; `workdir` moves that shell deliberately, a timeout or abort restarts it.
+- **Sandbox-aware**: the tool resolves the session's own sandbox policy and refuses (`SANDBOX_UNSUPPORTED`) outside `danger-full-access`, before spawning anything — the MSYS2 bash cannot start under a restricted token, so `pwsh` stays the confined fallback there.
+- **Structured results**: the rendered text is accompanied by `stdout` / `stderr` / `exitCode` / truncation facts / spill paths.
 - Keeps the official `pwsh` row as a fallback shell; every other row matches the official `ptc` line for line.
 - Adds a `workspace-instructions` row: the AGENTS.md / CLAUDE.md instruction chain is injected along with the system prompt.
 - The preset registers with the host **declaratively**, so new sessions can select it without copying any file by hand.
@@ -43,7 +46,9 @@ dsh plugin --profile web remove dsh-plugin-ptc-bash
 - Requires `@deepseek-ai/dsh` `^0.2.0-rc.1`; an incompatible upgrade is rejected at startup with the reason on stderr.
 - The preset id must not collide with another declared preset; on a collision this package only warns and does not register.
 - Editing `presets/ptc-bash/**` does not trigger a hot remount: you must restart `dsh web`, and the change only affects **newly opened sessions**.
-- The `bash` tool defaults to a `120000` ms timeout, a `600000` ms per-call cap, and a `64000`-byte per-stream output cap (a truncated result gives the spill file path).
+- The `bash` tool defaults to a `120000` ms timeout, a `600000` ms per-call cap, and a `64000`-byte visible output cap (the tail is kept, and a truncated result reports the spill file path).
+- One shell persists per session: `cd` / `export` survive across calls; a timeout, an abort or `exit` stops it and the next call starts a fresh one.
+- It runs only in a `danger-full-access` session; restricted sessions are refused and should use `pwsh` instead.
 - Collect background jobs with `job_output` / `job_list` / `job_kill` (requires `dsh-jobs` and `dsh-tool-jobs` to be loaded).
 
 ## Further reading

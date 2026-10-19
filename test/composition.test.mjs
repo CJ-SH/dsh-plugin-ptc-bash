@@ -174,7 +174,7 @@ describe('validateComposition', () => {
 
   it('reports a name scalar that no longer reads back', () => {
     const broken = composition.replace("name: '@deepseek-ai/dsh-persona'", "name: '@deepseek-ai/dsh-persona")
-    assert.match(validateComposition(broken)[0], /^line 31: a single-quoted scalar never closes$/)
+    assert.match(validateComposition(broken)[0], /^line 33: a single-quoted scalar never closes$/)
   })
 
   it('leaves package resolution to the installed registry', () => {

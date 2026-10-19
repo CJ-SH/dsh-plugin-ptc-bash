@@ -8,6 +8,9 @@
 
 - **首个回合即为 PTC**：以官方 PTC preset 为底座，工具面只有 `run_code` 与 subagent 工具。
 - Windows 上首选 **Git Bash**：新增 `dsh-bash-win` 行，参数集对齐官方 `bash`（`description` / `timeoutMs` / `run_in_background`）。
+- **每会话一个持久 shell**：`cd`、导出的变量、函数与别名跨调用保留；`workdir` 会刻意移动这个 shell，超时或中断则重建它。
+- **感知会话沙箱**：调用前解析会话自身的 sandbox 策略，非 `danger-full-access` 直接 `SANDBOX_UNSUPPORTED` 拒绝且不创建进程——MSYS2 bash 在受限令牌下起不来，此时 `pwsh` 是受约束的兜底 shell。
+- **结构化结果**：渲染文本之外还带 `stdout` / `stderr` / `exitCode` / 截断事实 / spill 路径。
 - 保留官方 `pwsh` 行作备用 shell；其余行与官方 `ptc` 逐行一致。
 - 新增 `workspace-instructions` 行：AGENTS.md / CLAUDE.md 指令链随系统提示词注入。
 - 预设以**声明**方式注册到宿主，无需手工复制任何文件即可被新会话选用。
@@ -43,7 +46,9 @@ dsh plugin --profile web remove dsh-plugin-ptc-bash
 - 需要 `@deepseek-ai/dsh` `^0.2.0-rc.1`；不兼容的升级会在启动时拒绝本行并在 stderr 给出原因。
 - 预设 id 不得与其他已声明预设重名，重名时本包只 warn、不注册。
 - 改 `presets/ptc-bash/**` 不触发热重挂载：都要重启 `dsh web`，且只对**新开的会话**生效。
-- `bash` 工具默认超时 `120000`ms、单次上限 `600000`ms、每路输出上限 `64000` 字节（截断时给出 spill 文件路径）。
+- `bash` 工具默认超时 `120000`ms、单次上限 `600000`ms、每路输出可见上限 `64000` 字节（保留尾部，截断时给出 spill 文件路径）。
+- 同一会话内 `cd` / `export` 会保留；超时、中断或 `exit` 会停掉 shell，下一次调用自动重建。
+- 只在 `danger-full-access` 会话里可用；受限会话请改用 `pwsh`。
 - 后台任务用 `job_output` / `job_list` / `job_kill` 收集（需 `dsh-jobs` 与 `dsh-tool-jobs` 已装载）。
 
 ## 深入阅读

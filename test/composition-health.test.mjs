@@ -267,6 +267,43 @@ describe('presets/ptc-bash as the installed harness reads it', () => {
     assert.match(found.registry.entryListProblem([{ id: 'x' }]) ?? '', /row 1 names no plugin/)
   })
 
+  it('declares tool schemas the installed runtime admits, and its results validate', async (t) => {
+    const found = await harness(t)
+    if (found === undefined) return
+    // The runtime enforces a JSON-Schema subset when a tool registers: a `type` array
+    // (e.g. `['integer', 'null']`) is rejected at registration and would take the whole
+    // preset row down with it. Only the install's own checker can judge that, so it runs
+    // here instead of at the next restart.
+    const toolsEntry = found.require.resolve('@deepseek-ai/dsh-tools/package.json')
+    const tools = await import(pathToFileURL(join(dirname(toolsEntry), 'lib', 'index.js')).href)
+    const bashWin = await import(pathToFileURL(join(presetDirectory, 'dsh-bash-win.mjs')).href)
+    let tool
+    bashWin.apply({
+      systemPrompt: { section() {}, getSectionOrder: () => 1000 },
+      tools: { register(value) { tool = value } },
+      subprocess: {},
+      shellEnv: { collect: () => ({}) },
+      logger: { warn() {} },
+      get: () => undefined,
+      on() {},
+      effect() {},
+    }, {})
+    tools.assertObjectJsonSchema(tool.parameters)
+    tools.assertSupportedJsonSchema(tool.output.schema)
+    const base = {
+      stdout: '', stderr: '', timedOut: false, shellExited: false,
+      stdoutTruncated: false, stderrTruncated: false, stdoutLostHead: false, stderrLostHead: false,
+    }
+    for (const value of [
+      { ...base, text: 'ok', exitCode: 0 },
+      { ...base, text: 'timed out', exitCode: null },
+      { text: 'started background job 1', jobId: '1' },
+      { ...base, text: 'spilled', exitCode: 1, stdoutSpillPath: 'C:/spill.txt' },
+    ]) {
+      assert.deepEqual(tools.validateJsonSchemaValue(tool.output.schema, value), [], 'result shape: ' + value.text)
+    }
+  })
+
   it('declares a peer range the installed runtime admits', async (t) => {
     const found = await harness(t)
     if (found === undefined) return

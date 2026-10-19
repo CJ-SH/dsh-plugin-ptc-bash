@@ -6,7 +6,7 @@
  * which carries the dsh-anchored-standard experiment (MIT). See NOTICE and LICENSES/.
  * Removed here: the prompt section narrowing (the official `ptc` assembly keeps all of
  * its sections), the `hint` instruction mode, and the workspace-directory line (the
- * official persona already renders the cwd).
+ * harness renders the current directory as required runtime context).
  *
  * Kept unchanged, because these are the parts that are easy to get subtly wrong:
  *

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { after, describe, it } from 'node:test'
 
@@ -42,47 +42,125 @@ function readerFrom(text, options = {}) {
   }
 }
 
-function settled(outcome, options = {}) {
-  return {
-    spawn: (spec) => ({
-      spec,
-      terminateCalls: 0,
-      terminate() { this.terminateCalls += 1 },
-      collected: {
-        stdout: options.stdout ?? readerFrom('hello'),
-        stderr: options.stderr ?? readerFrom(''),
-      },
-      done: Promise.resolve(outcome),
-    }),
+/**
+ * A scripted `bash -s` stand-in.
+ *
+ * It answers the startup handshake and every command frame the tool writes, so the whole
+ * persistent-shell protocol can be exercised without spawning a process. `onCommand` may
+ * return the string `'silent'` to model a command that never completes (timeout/abort).
+ */
+function fakeShell(options = {}) {
+  const stdout = readerFrom('')
+  const stderr = readerFrom('')
+  const writes = []
+  let terminateCalls = 0
+  let settled = false
+  let resolveDone
+  const done = new Promise((resolvePromise) => { resolveDone = resolvePromise })
+  const respond = (chunk) => {
+    const begin = /__dsh_ptc_bash_[a-f0-9]+_begin/.exec(chunk)?.[0]
+    const end = /__dsh_ptc_bash_[a-f0-9]+_end/.exec(chunk)?.[0]
+    if (begin === undefined || end === undefined) return
+    const lines = chunk.split('\n')
+    const heredoc = lines.findIndex((line) => line.startsWith('. /dev/stdin'))
+    const terminator = lines.indexOf(end)
+    const body = lines.slice(heredoc + 1, terminator === -1 ? undefined : terminator).join('\n')
+    if (body.includes('BASH_VERSION')) {
+      stdout.append('\n' + begin + '\n5.2.9\n' + end + '0\n')
+      return
+    }
+    const outcome = options.onCommand === undefined
+      ? { stdout: options.stdout ?? 'hello', stderr: options.stderr ?? '', exitCode: options.exitCode ?? 0 }
+      : options.onCommand(body)
+    if (outcome === 'silent') return
+    if (outcome !== null && typeof outcome === 'object' && 'exit' in outcome) {
+      settled = true
+      resolveDone({ exitCode: outcome.exit, signal: null })
+      return
+    }
+    stdout.append('\n' + begin + '\n' + (outcome.stdout ?? '') + '\n' + end + String(outcome.exitCode ?? 0) + '\n')
+    if ((outcome.stderr ?? '') !== '') stderr.append(outcome.stderr)
   }
+  return {
+    spec: undefined,
+    get terminateCalls() { return terminateCalls },
+    terminate() {
+      terminateCalls += 1
+      if (!settled) {
+        settled = true
+        resolveDone({ exitCode: null, signal: 'SIGTERM' })
+      }
+    },
+    collected: { stdout, stderr },
+    stdin: {
+      write: (chunk) => {
+        writes.push(chunk)
+        respond(chunk)
+      },
+    },
+    done,
+    writes,
+  }
+}
+
+function backgroundShell(outcome, options = {}) {
+  const stdout = options.stdout ?? readerFrom('hello')
+  const stderr = options.stderr ?? readerFrom('')
+  let terminateCalls = 0
+  return {
+    spec: undefined,
+    get terminateCalls() { return terminateCalls },
+    terminate() { terminateCalls += 1 },
+    collected: { stdout, stderr },
+    done: Promise.resolve(outcome),
+  }
+}
+
+function dangerAccess() {
+  return { resolve: () => ({ mode: 'danger-full-access' }) }
+}
+
+function restricted(mode) {
+  return { resolve: () => ({ mode }) }
 }
 
 function makeCtx(options = {}) {
   const registered = []
   const sections = []
   const spawns = []
+  const handlers = new Map()
+  const warnings = []
+  const effects = []
   const ctx = {
     subprocess: {
-      resolveExecutable: async (name) => 'C:/resolved/' + name,
+      resolveExecutable: async (executable) => 'C:/resolved/' + executable,
       spawn: (spec) => {
-        const built = (options.spawn ?? settled({ exitCode: 0, signal: null }).spawn)(spec)
-        spawns.push(built)
-        return built
+        const shell = (options.spawn ?? (() => fakeShell(options.shellOptions)))(spec)
+        shell.spec = spec
+        spawns.push(shell)
+        return shell
       },
     },
     tools: { register: (tool) => registered.push(tool) },
     systemPrompt: {
       section: (section) => sections.push(section),
-      getSectionOrder: (name) => (name === 'TOOL_BASH' ? 1000 : undefined),
+      getSectionOrder: (order) => (order === 'TOOL_BASH' ? 1000 : undefined),
     },
     // The real composition always injects `shellEnv`; passing `shellEnv: null` models a
     // deployment without that service, which must degrade to "no overlay".
     ...(options.shellEnv === null
       ? {}
       : { shellEnv: options.shellEnv ?? { collect: () => ({ DSH_HOME: 'C:/Users/x/.dsh', DSH_SHELL: '1', DSH_SESSION_ID: 'session-test' }) } }),
-    get: (name) => (name === 'jobs' ? options.jobs : undefined),
+    logger: { warn: (message) => warnings.push(message) },
+    get: (name) => {
+      if (name === 'sandboxPolicy') return options.policy === null ? undefined : (options.policy ?? dangerAccess())
+      if (name === 'jobs') return options.jobs
+      return undefined
+    },
+    on: (event, handler) => { handlers.set(event, handler) },
+    effect: (factory) => { effects.push(factory) },
   }
-  return { ctx, registered, sections, spawns }
+  return { ctx, registered, sections, spawns, handlers, warnings, effects }
 }
 
 function backgroundJobs() {
@@ -98,20 +176,25 @@ function backgroundJobs() {
 
 const exec = (cwd = 'D:/ws') => ({ agent: { session: { header: { cwd } } } })
 
+function framesOf(shell) {
+  return shell.writes.filter((chunk) => chunk.includes('. /dev/stdin'))
+}
+
 describe('dsh-bash-win', () => {
   it('registers the preferred bash tool and fills the official tool:bash slot', () => {
     const { ctx, registered, sections } = makeCtx()
     bashWin.apply(ctx, {})
     assert.equal(bashWin.name, 'dsh-bash-win')
     assert.ok(bashWin.inject.includes('systemPrompt'))
+    assert.ok(bashWin.inject.includes('shellEnv'))
     assert.equal(registered.length, 1)
     const tool = registered[0]
     assert.equal(tool.name, 'bash')
     assert.match(tool.description, /PREFERRED shell on this machine/)
     assert.match(tool.description, /only when the task specifically requires PowerShell/)
     assert.match(tool.description, /Network access is this host/)
-    assert.ok(!/apt and pip/.test(tool.description))
-    assert.ok(!/access to the internet/.test(tool.description))
+    assert.match(tool.description, /Shell state PERSISTS/)
+    assert.ok(!/State does NOT persist/.test(tool.description))
     assert.deepEqual(tool.parameters.required, ['command', 'description'])
     for (const key of ['command', 'description', 'timeoutMs', 'workdir', 'run_in_background']) {
       assert.ok(tool.parameters.properties[key] !== undefined, 'schema carries ' + key)
@@ -120,6 +203,7 @@ describe('dsh-bash-win', () => {
     assert.equal(sections[0].name, 'tool:bash')
     assert.equal(sections[0].order, 1000)
     assert.match(sections[0].text, /\[exit code: N\]/)
+    assert.match(sections[0].text, /state across calls/i)
   })
 
   it('rejects malformed arguments like the official shell tools', async () => {
@@ -132,44 +216,150 @@ describe('dsh-bash-win', () => {
     await assert.rejects(() => tool.execute({ command: 'ls', description: 'x', run_in_background: 'yes' }, exec()), /invalid run_in_background/)
   })
 
-  it('runs a foreground command with the Git Bash argv, session cwd and bounded stdio', async () => {
-    const { ctx, registered, spawns } = makeCtx()
-    bashWin.apply(ctx, { maxOutputBytes: 4096 })
-    const value = await registered[0].execute({ command: 'echo hi', description: 'Echo hi' }, exec('D:/ws'))
-    assert.equal(value.text, 'hello')
+  it('refuses a session outside danger-full-access without spawning', async () => {
+    const { ctx, registered, spawns } = makeCtx({ policy: restricted('workspace-write') })
+    bashWin.apply(ctx, {})
+    await assert.rejects(
+      () => registered[0].execute({ command: 'ls', description: 'List' }, exec()),
+      /SANDBOX_UNSUPPORTED: bash runs only in a danger-full-access session.*workspace-write mode/,
+    )
+    assert.equal(spawns.length, 0)
+  })
+
+  it('serves a deployment that composes no sandbox-policy service, warning once', async () => {
+    const { ctx, registered, spawns, warnings } = makeCtx({ policy: null })
+    bashWin.apply(ctx, {})
+    const execCtx = exec()
+    const first = await registered[0].execute({ command: 'echo hi', description: 'Echo hi' }, execCtx)
+    await registered[0].execute({ command: 'echo hi', description: 'Echo hi' }, execCtx)
+    assert.equal(first.stdout, 'hello')
     assert.equal(spawns.length, 1)
-    assert.deepEqual(spawns[0].spec.argv.slice(1), ['-c', 'echo hi'])
+    assert.equal(warnings.filter((message) => /sandbox-policy service/.test(message)).length, 1)
+  })
+
+  it('keeps one persistent shell per session and reuses it across calls', async () => {
+    const { ctx, registered, spawns } = makeCtx()
+    bashWin.apply(ctx, {})
+    const execCtx = exec()
+    const first = await registered[0].execute({ command: 'pwd', description: 'Print dir' }, execCtx)
+    const second = await registered[0].execute({ command: 'export A=1', description: 'Export' }, execCtx)
+    assert.equal(spawns.length, 1, 'one shell process for both calls')
+    assert.deepEqual(spawns[0].spec.argv, ['C:/resolved/bash', '--norc', '--noprofile', '-s'])
+    assert.equal(spawns[0].spec.stdio.stdin, 'pipe')
     assert.equal(spawns[0].spec.cwd, 'D:/ws')
-    assert.equal(spawns[0].spec.stdio.stdout.maxBytes, 4096)
     assert.equal(spawns[0].spec.graceMs, 3000)
+    const frames = framesOf(spawns[0])
+    assert.equal(frames.length, 3, 'handshake plus two commands')
+    assert.match(frames[1], /\npwd\n/)
+    assert.match(frames[2], /\nexport A=1\n/)
+    assert.equal(first.stdout, 'hello')
+    assert.equal(second.stdout, 'hello')
   })
 
-  it('declares the shell-env service so per-execution DSH_* facts are reachable', () => {
-    assert.ok(bashWin.inject.includes('shellEnv'))
+  it('writes workdir as a persistent cd inside the same shell', async () => {
+    const { ctx, registered, spawns } = makeCtx()
+    bashWin.apply(ctx, {})
+    const execCtx = exec('D:/ws')
+    await registered[0].execute({ command: 'ls', description: 'List', workdir: 'sub' }, execCtx)
+    const expected = bashWin.normalizeWorkdir('sub', 'D:/ws')
+    assert.equal(expected, resolve('D:/ws', 'sub').replace(/\\/g, '/'))
+    const frames = framesOf(spawns[0])
+    assert.ok(frames[1].includes("cd -- '" + expected + "' && ls"), frames[1])
+    const second = await registered[0].execute({ command: 'pwd', description: 'Print dir' }, execCtx)
+    assert.equal(spawns.length, 1, 'workdir did not restart the shell')
+    assert.equal(second.stdout, 'hello')
   })
 
-  it('passes the current execution DSH_* overlay through the spawn spec', async () => {
+  it('stops the shell on timeout and starts a fresh one on the next call', async () => {
+    let commands = 0
+    const shellOptions = {
+      onCommand: (body) => {
+        if (body.includes('BASH_VERSION')) return { stdout: '5.2.9', exitCode: 0 }
+        commands += 1
+        return commands === 1 ? 'silent' : { stdout: 'fresh', exitCode: 0 }
+      },
+    }
+    const { ctx, registered, spawns } = makeCtx({ shellOptions })
+    bashWin.apply(ctx, {})
+    const timedOut = await registered[0].execute({ command: 'sleep 99', description: 'Sleep', timeoutMs: 30 }, exec())
+    assert.equal(timedOut.timedOut, true)
+    assert.match(timedOut.text, /\[timed out after 30ms; the shell was stopped/)
+    assert.equal(spawns[0].terminateCalls, 1)
+    const next = await registered[0].execute({ command: 'pwd', description: 'Print dir' }, exec())
+    assert.equal(spawns.length, 2, 'a dead shell is replaced')
+    assert.equal(next.stdout, 'fresh')
+  })
+
+  it('reports a timeout-free non-zero exit as a marker', async () => {
+    const { ctx, registered } = makeCtx({ shellOptions: { stdout: 'boom', exitCode: 7 } })
+    bashWin.apply(ctx, {})
+    const value = await registered[0].execute({ command: 'exit 7', description: 'Exit seven' }, exec())
+    assert.equal(value.exitCode, 7)
+    assert.match(value.text, /boom/)
+    assert.match(value.text, /\[exit code: 7\]$/)
+  })
+
+  it('marks stderr and keeps the structured result fields', async () => {
+    const { ctx, registered } = makeCtx({ shellOptions: { stdout: 'out', stderr: 'boom', exitCode: 0 } })
+    bashWin.apply(ctx, {})
+    const value = await registered[0].execute({ command: 'boom', description: 'Boom' }, exec())
+    assert.match(value.text, /\[stderr\]\nboom/)
+    assert.equal(value.stdout, 'out')
+    assert.equal(value.stderr, 'boom')
+    assert.equal(value.exitCode, 0)
+    assert.equal(value.timedOut, false)
+    assert.equal(value.shellExited, false)
+    assert.equal(value.stdoutTruncated, false)
+    assert.equal(value.stderrTruncated, false)
+    // The declared output schema is a closed property set: anything added here without a
+    // matching declaration is rejected by the runtime's output validation.
+    assert.deepEqual(Object.keys(value).sort(), [
+      'exitCode', 'shellExited', 'stderr', 'stderrLostHead', 'stderrTruncated',
+      'stdout', 'stdoutLostHead', 'stdoutTruncated', 'text', 'timedOut',
+    ])
+    assert.equal('signal' in value, false, 'signal only shapes the text markers')
+  })
+
+  it('reports a command that exits the shell, and rebuilds on the next call', async () => {
+    const shellOptions = {
+      onCommand: (body) => (body.includes('BASH_VERSION') ? { stdout: '5.2.9', exitCode: 0 } : { exit: 7 }),
+    }
+    const { ctx, registered, spawns } = makeCtx({ shellOptions })
+    bashWin.apply(ctx, {})
+    const execCtx = exec()
+    const value = await registered[0].execute({ command: 'exit 7', description: 'Exit seven' }, execCtx)
+    assert.equal(value.shellExited, true)
+    assert.equal(value.exitCode, 7)
+    assert.match(value.text, /\[shell exited; the next call starts a fresh shell\]/)
+    assert.match(value.text, /\[exit code: 7\]/)
+    assert.ok(!value.stdout.includes('__dsh_ptc_bash_'), 'frame markers never reach the model')
+    await registered[0].execute({ command: 'pwd', description: 'Print dir' }, execCtx)
+    assert.equal(spawns.length, 2, 'the dead shell is replaced')
+  })
+
+  it('aborts the call and stops the shell when the tool call is cancelled', async () => {
+    const shellOptions = {
+      onCommand: (body) => (body.includes('BASH_VERSION') ? { stdout: '5.2.9', exitCode: 0 } : 'silent'),
+    }
+    const { ctx, registered, spawns } = makeCtx({ shellOptions })
+    bashWin.apply(ctx, {})
+    const controller = new AbortController()
+    const execCtx = { ...exec(), signal: controller.signal }
+    const pending = registered[0].execute({ command: 'sleep 99', description: 'Sleep' }, execCtx)
+    setTimeout(() => controller.abort(), 20)
+    await assert.rejects(() => pending, /tool call aborted/)
+    assert.equal(spawns[0].terminateCalls, 1)
+  })
+
+  it('passes the current execution DSH_* overlay through the shell spawn', async () => {
     const overlay = { DSH_HOME: 'C:/Users/x/.dsh', DSH_SHELL: '1', DSH_SESSION_ID: 'session-abc' }
     const calls = []
     const { ctx, registered, spawns } = makeCtx({ shellEnv: { collect: (current) => { calls.push(current); return overlay } } })
     bashWin.apply(ctx, {})
-    const execCtx = exec('D:/ws')
+    const execCtx = exec()
     await registered[0].execute({ command: 'echo hi', description: 'Echo hi' }, execCtx)
     assert.equal(calls.length, 1)
     assert.equal(calls[0], execCtx, 'collect receives this execution, not a placeholder')
-    assert.deepEqual(spawns[0].spec.env, overlay)
-    assert.deepEqual(spawns[0].spec.argv.slice(1), ['-c', 'echo hi'])
-    assert.equal(spawns[0].spec.cwd, 'D:/ws')
-  })
-
-  it('carries the same overlay into a background job', async () => {
-    const jobs = backgroundJobs()
-    const overlay = { DSH_SHELL: '1', DSH_SESSION_ID: 'session-bg' }
-    const { ctx, registered, spawns } = makeCtx({ jobs, shellEnv: { collect: () => overlay } })
-    bashWin.apply(ctx, {})
-    await registered[0].execute({ command: 'npm test', description: 'Run tests', run_in_background: true }, exec())
-    jobs.started[0].run()
-    assert.equal(spawns.length, 1)
     assert.deepEqual(spawns[0].spec.env, overlay)
   })
 
@@ -184,56 +374,18 @@ describe('dsh-bash-win', () => {
       const { ctx, registered, spawns } = makeCtx({ shellEnv })
       bashWin.apply(ctx, {})
       const value = await registered[0].execute({ command: 'echo hi', description: 'Echo hi' }, exec())
-      assert.equal(value.text, 'hello', label + ': shell still runs')
+      assert.equal(value.stdout, 'hello', label + ': shell still runs')
       assert.equal(Object.hasOwn(spawns[0].spec, 'env'), false, label + ': no env key')
     }
   })
 
-  it('reports a non-zero exit as a marker instead of an error', async () => {
-    const { ctx, registered } = makeCtx({ spawn: settled({ exitCode: 7, signal: null }).spawn })
-    bashWin.apply(ctx, {})
-    const value = await registered[0].execute({ command: 'exit 7', description: 'Exit seven' }, exec())
-    assert.match(value.text, /hello/)
-    assert.match(value.text, /\[exit code: 7\]$/)
-  })
-
-  it('marks stderr, truncation and timeouts in the result text', async () => {
-    const stderr = readerFrom('boom', { lossy: true, spillPath: 'C:/spill.txt' })
-    const { ctx, registered } = makeCtx({ spawn: settled({ exitCode: 0, signal: null }, { stderr }).spawn })
-    bashWin.apply(ctx, {})
-    const value = await registered[0].execute({ command: 'boom', description: 'Boom' }, exec())
-    assert.match(value.text, /\[stderr\]\nboom/)
-    assert.match(value.text, /full output: C:\/spill.txt/)
-
-    const onAbort = {
-      spawn: (spec) => ({
-        spec,
-        terminateCalls: 0,
-        terminate() {},
-        collected: { stdout: readerFrom(''), stderr: readerFrom('') },
-        done: new Promise((resolve) => {
-          spec.signal?.addEventListener('abort', () => resolve({ exitCode: null, signal: 'SIGTERM' }), { once: true })
-        }),
-      }),
-    }
-    const timeoutCtx = makeCtx({ spawn: onAbort.spawn })
-    bashWin.apply(timeoutCtx.ctx, {})
-    const timedOut = await timeoutCtx.registered[0].execute({ command: 'sleep 99', description: 'Sleep', timeoutMs: 20 }, exec())
-    assert.match(timedOut.text, /\[timed out after 20ms\]/)
-    assert.match(timedOut.text, /\[killed by signal: SIGTERM\]/)
-  })
-
-  it('resolves a relative workdir against the session workspace', async () => {
-    const { ctx, registered, spawns } = makeCtx()
-    bashWin.apply(ctx, {})
-    await registered[0].execute({ command: 'ls', description: 'List', workdir: 'sub' }, exec('D:/ws'))
-    assert.equal(spawns[0].spec.cwd, join('D:/ws', 'sub'))
-  })
-
-  it('starts a background job on the host jobs registry', async () => {
+  it('starts a background job in its own process on the host jobs registry', async () => {
     const stdout = readerFrom('first')
     const jobs = backgroundJobs()
-    const { ctx, registered, spawns } = makeCtx({ jobs, spawn: settled({ exitCode: 0, signal: null }, { stdout }).spawn })
+    const { ctx, registered, spawns } = makeCtx({
+      jobs,
+      spawn: (spec) => backgroundShell({ exitCode: 0, signal: null }, { stdout }),
+    })
     bashWin.apply(ctx, {})
     const execCtx = exec()
     const value = await registered[0].execute({ command: 'npm test', description: 'Run tests', run_in_background: true }, execCtx)
@@ -254,9 +406,25 @@ describe('dsh-bash-win', () => {
     assert.deepEqual(await hooks.done, { status: 'completed', detail: 'exit code: 0' })
   })
 
+  it('runs background commands through their own bash -c, never the session shell', async () => {
+    const jobs = backgroundJobs()
+    const { ctx, registered, spawns } = makeCtx({
+      jobs,
+      spawn: () => backgroundShell({ exitCode: 0, signal: null }),
+    })
+    bashWin.apply(ctx, {})
+    await registered[0].execute({ command: 'npm test', description: 'Run tests', run_in_background: true }, exec('D:/ws'))
+    jobs.started[0].run()
+    assert.deepEqual(spawns[0].spec.argv, ['C:/resolved/bash', '-c', 'npm test'])
+    assert.equal(spawns[0].spec.cwd, 'D:/ws')
+  })
+
   it('maps a signalled background process to a killed job outcome', async () => {
     const jobs = backgroundJobs()
-    const { ctx, registered } = makeCtx({ jobs, spawn: settled({ exitCode: null, signal: 'SIGTERM' }).spawn })
+    const { ctx, registered } = makeCtx({
+      jobs,
+      spawn: () => backgroundShell({ exitCode: null, signal: 'SIGTERM' }),
+    })
     bashWin.apply(ctx, {})
     await registered[0].execute({ command: 'sleep 1', description: 'Sleep', run_in_background: true }, exec())
     const hooks = jobs.started[0].run()
@@ -276,6 +444,60 @@ describe('dsh-bash-win', () => {
       () => disabled.registered[0].execute({ command: 'ls', description: 'List', run_in_background: true }, exec()),
       /run_in_background is disabled/,
     )
+  })
+
+  it('stops one session shell when its agent is disposed', async () => {
+    const { ctx, registered, spawns, handlers } = makeCtx()
+    bashWin.apply(ctx, {})
+    const execCtx = exec()
+    await registered[0].execute({ command: 'pwd', description: 'Print dir' }, execCtx)
+    handlers.get('agent/disposed')({ agent: execCtx.agent })
+    assert.equal(spawns[0].terminateCalls, 1)
+  })
+
+  it('closes its shell and refuses new work when the plugin is disposed', async () => {
+    const { ctx, registered, spawns, effects } = makeCtx()
+    bashWin.apply(ctx, {})
+    const execCtx = exec()
+    await registered[0].execute({ command: 'pwd', description: 'Print dir' }, execCtx)
+    const dispose = effects[0]()
+    assert.equal(typeof dispose, 'function')
+    dispose()
+    assert.equal(spawns[0].terminateCalls, 1)
+    await assert.rejects(
+      () => registered[0].execute({ command: 'pwd', description: 'Print dir' }, execCtx),
+      /session shell was closed before this command could run/,
+    )
+    assert.equal(spawns.length, 1, 'a disposed plugin never spawns another shell')
+  })
+
+  it('builds frames that survive multi-line commands and parses their frames', () => {
+    const marker = bashWin.markerFor()
+    const frame = bashWin.buildFrame('printf "a\\nb\\n"', marker)
+    assert.ok(frame.includes(". /dev/stdin <<'" + marker.end + "'"))
+    assert.ok(frame.includes('\nprintf "a\\nb\\n"\n'))
+    assert.ok(frame.includes("printf '\\n%s%d\\n' '" + marker.end + "' \"$__dsh_ptc_bash_status\""))
+    const parsed = bashWin.parseFrame('\n' + marker.begin + '\na\nb\n' + marker.end + '0\n', marker)
+    assert.deepEqual(parsed, { stdout: 'a\nb', exitCode: 0, frameStartFound: true })
+    const headLost = bashWin.parseFrame('b\n' + marker.end + '3\n', marker)
+    assert.deepEqual(headLost, { stdout: 'b', exitCode: 3, frameStartFound: false })
+    assert.equal(bashWin.parseFrame('\nstray output\n', marker), undefined)
+  })
+
+  it('strips frame markers from a partial capture and reports a lost head', () => {
+    const marker = bashWin.markerFor()
+    assert.deepEqual(bashWin.framePartial('x' + marker.begin + '\nout\n', marker), { text: 'out\n', lostHead: false })
+    assert.deepEqual(bashWin.framePartial('c0ffee_begin\nout', marker), { text: 'out', lostHead: true })
+    assert.deepEqual(bashWin.framePartial('plain output', marker), { text: 'plain output', lostHead: true })
+    assert.deepEqual(bashWin.framePartial('', marker), { text: '', lostHead: false })
+  })
+
+  it('keeps the tail of an over-budget output at a UTF-8 boundary', () => {
+    const value = bashWin.truncateVisible('héllo', 4)
+    assert.equal(value.truncated, true)
+    assert.equal(value.lostHead, true)
+    assert.equal(value.text, 'llo')
+    assert.deepEqual(bashWin.truncateVisible('hi', 4), { text: 'hi', truncated: false, lostHead: false })
   })
 })
 

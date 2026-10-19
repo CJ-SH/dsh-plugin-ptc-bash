@@ -34,7 +34,7 @@
 |---|---|
 | `tool-bash` | 官方行：非 win32 用沙箱 bash 执行器 |
 | `tool-pwsh` | 官方行：win32 的 pwsh，**保留为备用 shell** |
-| `dsh-bash-win`（新增） | win32 的 Git Bash `bash` 工具（首选 shell）；参数集对齐官方（`description`/`timeoutMs`/`run_in_background`），后台任务用 `job_output`/`job_kill` 收集 |
+| `dsh-bash-win`（新增） | win32 的 Git Bash `bash` 工具（首选 shell）；**每会话一个持久 shell**，参数集对齐官方（`description`/`timeoutMs`/`run_in_background`），后台任务用 `job_output`/`job_kill` 收集 |
 | `workspace-instructions`（新增） | AGENTS.md/CLAUDE.md 指令链进系统提示词；官方 `agent-instructions` 的重复注入被替换为标记消息 |
 | `workflow-ptc` / `tool-workflow` / `tool-ralph` | 官方行：编排引擎与它的两个消费方（`workflow` 扇出脚本、`ralph` 全新 agent 迭代）。官方在 `ptc` 里默认**三行全禁用**——PTC 模式的编排面只有 `run_code` + subagent 工具——本预设跟随上游，不额外保留 ralph |
 | `tool-plugin-manager` | 官方行：模型侧 `plugin_manager`（可改 profile 插件与组合包，官方默认 `disabled`），本预设跟随上游 |
@@ -49,21 +49,40 @@
 | `bashPath` | 自动推断 | 显式指定 Git Bash 可执行文件；推断顺序：git 安装根 → ProgramFiles / ProgramFiles(x86) / LOCALAPPDATA / scoop 推导根 → PATH（兜底可能是 WSL shim） |
 | `timeoutMs` | `120000` | 每次调用的默认超时 |
 | `maxTimeoutMs` | `600000` | 单次 `timeoutMs` 参数的上限 |
-| `maxOutputBytes` | `64000` | 每路输出在内存中的上限；被截断时结果里会给出 spill 文件路径 |
+| `maxOutputBytes` | `64000` | 单次调用每路输出的可见上限；**保留尾部**，丢头时结果里标注并给出 spill 文件路径 |
 | `enableRunInBackground` | `true` | 设为 `false` 时 `run_in_background` 直接报错 |
 
-模型侧参数：`command`（必填）、`description`（必填，UI 显示用）、`timeoutMs`、`workdir`（相对路径按会话工作目录解析）、
-`run_in_background`。
+模型侧参数：`command`（必填）、`description`（必填，UI 显示用）、`timeoutMs`、`workdir`（相对路径按会话工作目录解析，
+并以 `cd -- <dir>` 写进持久 shell，**因此会改变后续调用的起始目录**）、`run_in_background`。
 
-结果文本：stdout → `[stderr]` 段 → `[output truncated; full output: <path>]` / `[timed out after Nms]` / `[killed by signal: S]` /
-`[exit code: N]` 标记。非零退出是「报告」而不是错误结果；只有参数非法、spawn 失败、工具调用被中止才是 isError。
+结果文本：stdout → `[stderr]` 段 → `[output truncated; …]` / `[timed out after Nms; the shell was stopped, …]` /
+`[shell exited; …]` / `[killed by signal: S]` / `[exit code: N]` 标记。非零退出是「报告」而不是错误结果；只有参数非法、
+spawn 失败、工具调用被中止才是 isError。同一结果还带结构化字段：`stdout`、`stderr`、`exitCode`、`timedOut`、
+`shellExited`、`stdoutTruncated`/`stderrTruncated`、`stdoutLostHead`/`stderrLostHead`、`stdoutSpillPath`/`stderrSpillPath`、
+`jobId`。
 后台任务注册到宿主 `ctx.jobs` 注册表，用 `job_output` / `job_list` / `job_kill` 驱动（需要 `dsh-jobs` 与 `dsh-tool-jobs` 已装载，预设里本来就带 `tool-jobs`）。
+
+### 持久 shell 与沙箱门禁
+
+- **一个会话一个 `bash -s` 进程**：`cd`、导出的变量、函数、别名跨调用保留；命令按会话串行执行（并发调用排队）。
+  帧协议用 heredoc 包裹命令（`. /dev/stdin <<'<marker>'`），多行命令或未闭合的引号不会吞掉收尾的状态行。
+- **超时 / 中断即停 shell**：下一次调用启动新 shell，结果里写明「the next call starts a fresh shell」。
+  `exit` 也一样；交互式等待 stdin 的命令会一直占用到 `timeoutMs`。
+- **沙箱门禁**：调用前读会话自身的 `sandboxPolicy.resolve({ session }).mode`，只有 `danger-full-access` 才执行；
+  其他模式直接 `SANDBOX_UNSUPPORTED` 拒绝且**不创建进程**，文案指向 `pwsh`（MSYS2 bash 在受限令牌下会在 `main`
+  之前退出）。会话在运行中被切到受限模式时，下一次调用会拒绝并关闭已有的未约束 shell（正在飞的那条命令随之中断）。
+  部署没有组合 `sandboxPolicy` 服务时放行并只警告一次（预设要能挂载在未组合该服务的部署里）。
+- **后台任务独立进程**：`run_in_background` 用 `bash -c` 单独 spawn，不经过会话 shell，所以会话 shell 被终止时
+  作业照常存活。
+- **状态在 shell 生命周期内稳定**：`DSH_*` overlay 在 shell 启动时取一次；shell 按 agent 键控，同一会话的
+  `DSH_SESSION_ID` 不变。
 
 ### 会话身份（DSH_*）
 
-工具声明 `inject: ['subprocess', 'tools', 'systemPrompt', 'shellEnv']`，并在每次调用时把
-**本次执行**的 dsh shell 环境事实（`ctx.shellEnv.collect(exec)`：`DSH_SESSION_ID` / `DSH_SHELL` / `DSH_HOME`
-+ 贡献者变量）作为 spawn spec 的显式 `env` 传给 Git Bash。
+工具声明 `inject: ['subprocess', 'tools', 'systemPrompt', 'shellEnv']`，并在**启动持久 shell 时**把
+**该会话**的 dsh shell 环境事实（`ctx.shellEnv.collect(exec)`：`DSH_SESSION_ID` / `DSH_SHELL` / `DSH_HOME`
++ 贡献者变量）作为 spawn spec 的显式 `env` 传给 Git Bash。shell 按 agent 键控，同一会话的 id 在 shell
+生命周期内不变，因此不需要每次调用重新注入。
 
 为什么必须这么做：`@deepseek-ai/dsh-subprocess` 会**主动剥掉 ambient 环境里所有 `DSH_*`**（Windows 名字大小写不敏感，
 避免「当前 DSH_* 事实」被隐式继承），spawn spec 的 `env` 是唯一受支持的注入通道；官方 `dsh-tool-bash` / `dsh-tool-pwsh`
@@ -158,6 +177,16 @@ harness」。只有整机都没有 dsh 时才会 skip，且文案会写明这一
 新会话里的手工验收：`bash` 能跑 `uname -s` / `git --version` / `pwd`；非零退出带输出回报；
 普通命令走 `bash` 而非 `pwsh`；首个回合即为 PTC（工具面只有 `run_code` + SDK）。
 
+持久 shell 验收（同一会话内连续调用）：
+
+```sh
+cd /tmp && pwd     # 期望 /tmp
+pwd                # 期望仍是 /tmp（状态保留）
+```
+
+`workdir: "sub"` 调一次后再不带 `workdir` 调 `pwd`，期望仍在 `sub`。受限（非 `danger-full-access`）会话里
+调用 `bash` 应得到 `SANDBOX_UNSUPPORTED` 且没有子进程；超时后下一次调用应拿到新 shell 并在结果里看到提示。
+
 预设可见性（0.2.0 起唯一无法离线替代的验收）：新会话预设选择器里出现 `ptc-bash`，选中后能新建会话。
 
 会话身份（`DSH_*`）验收，同样要在**新会话**里经 `bash` 工具执行：
@@ -175,7 +204,7 @@ env | grep '^DSH_'        # 期望：DSH_HOME / DSH_SESSION_ID=session-<本会�
   0.1.x 的 `@deepseek-ai/dsh-agent-presets` 包已不存在；许可全文见
   `LICENSES/deepseek-dsh-agent-presets-MIT.txt`（文件名保留，内容即该 preset 的 MIT 文本）；
 - `dsh-bash-win.mjs`（原 `custom-bash.mjs`，后改名并增强）原始实现来自 xiaobright/dsh-anchored-standard（MIT），直接来源是
-  `@linxin666/dsh-liangshen`（Apache-2.0）；
+  `@linxin666/dsh-liangshen`（Apache-2.0）；持久 shell 的 heredoc 帧协议重写自 `@linxin666/dsh-win-bash`（Apache-2.0）；
 - `workspace-instructions.mjs` 来自 `@linxin666/dsh-liangshen` 的 `minimal-prompt.mjs`（Apache-2.0）。
 
 本包自有代码（`lib/`、`test/`、`tools/`、`cordis.patch.yml`）以 MIT 分发；随包分发的派生文件按其上游
