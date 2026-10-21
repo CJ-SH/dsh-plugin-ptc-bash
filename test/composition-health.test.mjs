@@ -313,8 +313,11 @@ describe('presets/ptc-bash as the installed harness reads it', () => {
     // participate in the range, and an incompatible range denies this row at startup.
     assert.equal(found.appBoot.evaluatePluginCompatibility(manifest), undefined)
     // Proof that the gate is really being asked, and not answering green for everything.
+    // The issue object names the unmet peers under `requirements` (0.2.1 renamed the
+    // field from the earlier `peers`); reading the old name would silently compare
+    // `undefined` and pass for every manifest.
     const wrong = { ...manifest, peerDependencies: { '@deepseek-ai/dsh': '^0.1.5-rc.1' } }
-    assert.deepEqual(found.appBoot.evaluatePluginCompatibility(wrong)?.peers, { '@deepseek-ai/dsh': '^0.1.5-rc.1' })
+    assert.deepEqual(found.appBoot.evaluatePluginCompatibility(wrong)?.requirements, { '@deepseek-ai/dsh': '^0.1.5-rc.1' })
     // A manifest that declares no peer at all is admitted silently, which is exactly why
     // the range above is the only thing between an incompatible upgrade and a dead row.
     const undeclared = { ...manifest }
