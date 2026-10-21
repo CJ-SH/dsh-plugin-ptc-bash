@@ -32,12 +32,14 @@
 
 | 行 | 说明 |
 |---|---|
+| `time-context` | 官方行：每轮注入当前时间与浏览器时区（durable 消息，不是提示词段） |
 | `tool-bash` | 官方行：非 win32 用沙箱 bash 执行器 |
 | `tool-pwsh` | 官方行：win32 的 pwsh，**保留为备用 shell** |
 | `dsh-bash-win`（新增） | win32 的 Git Bash `bash` 工具（首选 shell）；**每会话一个持久 shell**，参数集对齐官方（`description`/`timeoutMs`/`run_in_background`），后台任务用 `job_output`/`job_kill` 收集 |
 | `workspace-instructions`（新增） | AGENTS.md/CLAUDE.md 指令链进系统提示词；官方 `agent-instructions` 的重复注入被替换为标记消息 |
-| `workflow-ptc` / `tool-workflow` / `tool-ralph` | 官方行：编排引擎与它的两个消费方（`workflow` 扇出脚本、`ralph` 全新 agent 迭代）。官方在 `ptc` 里默认**三行全禁用**——PTC 模式的编排面只有 `run_code` + subagent 工具——本预设跟随上游，不额外保留 ralph |
-| `tool-plugin-manager` | 官方行：模型侧 `plugin_manager`（可改 profile 插件与组合包，官方默认 `disabled`），本预设跟随上游 |
+| `tool-schedule` | 官方行：四个 `schedule_*` 定时提醒工具；依赖宿主 `schedule` 服务，未组合时该行 pending 而不注册 |
+| `workflow-ptc` / `tool-workflow` | 官方行：编排引擎与它的消费方。官方在 `ptc` 里默认**两行全禁用**——PTC 模式的编排面只有 `run_code` + subagent 工具——本预设跟随上游（0.2.1 上游已删除 `tool-ralph` 行） |
+| `tool-plugin-manager` / `tool-plugin-market` | 官方行：模型侧插件管理与市场入口，官方默认均 `disabled`，本预设跟随上游 |
 | 其余行 | 与官方 `ptc` 逐行一致（含 `tool-presentation` `mode: ptc` → 首回合即 PTC、`/goal`、`web_fetch`、subagent 模型选择等） |
 
 ### bash 工具（dsh-bash-win）配置与结果契约

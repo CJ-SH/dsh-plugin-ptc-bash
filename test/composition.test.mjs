@@ -132,13 +132,13 @@ describe('parseYaml', () => {
 describe('parseComposition', () => {
   it('reads the shipped composition, blocks scalar and gates included', () => {
     const rows = parseComposition(composition)
-    assert.equal(rows.length, 22)
+    assert.equal(rows.length, 25)
     assert.equal(rows[0].id, 'persona')
     assert.deepEqual(rows.find((row) => row.id === 'dsh-bash-win').disabled, { __jsExpr: "process.platform !== 'win32'" })
     const planning = rows.find((row) => row.id === 'planning')
     assert.equal(planning.config[0].id, 'plan-mode')
     assert.match(planning.config[0].config.section, /You are in plan mode/)
-    assert.match(planning.config[0].config.section, /exit_plan_mode succeeds/)
+    assert.match(planning.config[0].config.section, /approves your plan through exit_plan_mode/)
   })
 
   it('refuses a document that is not a row list', () => {

@@ -13,11 +13,13 @@ const SHIPPED_IDS = ['minimal', 'standard', 'ptc', 'cordis']
 const OFFICIAL_TOP_LEVEL_ROWS = [
   'persona',
   'agent-instructions',
+  'time-context',
   'tool-bash',
   'tool-pwsh',
   'tool-fs',
   'tool-fs-search',
   'tool-jobs',
+  'tool-schedule',
   'skill-filesystem',
   'tool-skill',
   'command-goal',
@@ -31,6 +33,7 @@ const OFFICIAL_TOP_LEVEL_ROWS = [
   'tool-presentation',
   'present',
   'tool-plugin-manager',
+  'tool-plugin-market',
 ]
 
 function topLevelIds(text) {
@@ -45,7 +48,8 @@ function expectedRoster() {
   const expected = []
   for (const id of OFFICIAL_TOP_LEVEL_ROWS) {
     expected.push(id)
-    if (id === 'agent-instructions') expected.push('workspace-instructions')
+    // The two rows this package adds, immediately after their upstream anchors.
+    if (id === 'time-context') expected.push('workspace-instructions')
     if (id === 'tool-pwsh') expected.push('dsh-bash-win')
   }
   return expected
@@ -93,8 +97,12 @@ describe('presets/ptc-bash', () => {
     // the assertions tolerate them rather than pinning the prose.
     assert.match(composition, /^    - id: workflow-ptc\n^      name: '@deepseek-ai\/dsh-workflow-ptc'\n(?:^      #.*\n)*^      disabled: true$/m)
     assert.match(composition, /^    - id: tool-workflow\n^      name: '@deepseek-ai\/dsh-tool-workflow'\n(?:^      #.*\n)*^      disabled: true$/m)
-    assert.match(composition, /^    - id: tool-ralph\n^      name: '@deepseek-ai\/dsh-tool-ralph'\n(?:^      #.*\n)*^      disabled: true$/m)
     assert.match(composition, /^- id: tool-plugin-manager\n  name: '@deepseek-ai\/dsh-plugin-manager\/tools'\n  disabled: true$/m)
+    assert.match(composition, /^- id: tool-plugin-market\n  name: '@deepseek-ai\/dsh-plugin-market\/tools'\n  disabled: true$/m)
+    // Upstream 0.2.1-rc.2 removed the ralph row; keeping it here would drift.
+    assert.ok(!composition.includes('tool-ralph'))
+    assert.ok(!composition.includes('tool-subagent-codex'))
+    assert.ok(!composition.includes('tool-subagent-claude-code'))
   })
 
   it('passes the roster structural contract', () => {
