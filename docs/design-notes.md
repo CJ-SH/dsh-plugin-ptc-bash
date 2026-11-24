@@ -40,7 +40,36 @@
 | `tool-schedule` | 官方行：四个 `schedule_*` 定时提醒工具；依赖宿主 `schedule` 服务，未组合时该行 pending 而不注册 |
 | `workflow-ptc` / `tool-workflow` | 官方行：编排引擎与它的消费方。官方在 `ptc` 里默认**两行全禁用**——PTC 模式的编排面只有 `run_code` + subagent 工具——本预设跟随上游（0.2.1 上游已删除 `tool-ralph` 行） |
 | `tool-plugin-manager` / `tool-plugin-market` | 官方行：模型侧插件管理与市场入口，官方默认均 `disabled`，本预设跟随上游 |
-| 其余行 | 与官方 `ptc` 逐行一致（含 `tool-presentation` `mode: ptc` → 首回合即 PTC、`/goal`、`web_fetch`、subagent 模型选择等） |
+| `tool-executor-ptc` | 官方行：注册 `run_code` 与 PTC-only 提示词段，PTC 从首回合生效。**0.2.2 把旧的 `tool-presentation`（`mode: ptc`）并进这一行**，两行并存会重复注册同一面 |
+| `tool-office` | 官方行（0.2.2 新增）：Office 文档工具 |
+| `tool-subagent-control` | 官方行：**0.2.2 把 `list_agents` 并回本行**——旧的 `…/list-agents` 子路径不再导出；`interrupt: false` 关掉 `interrupt_agent`，消息与发现工具照常 |
+| 其余行 | 与官方 `ptc` 逐行一致（`/goal`、`web_fetch`、subagent 模型选择 `modelSelection`+`modelDiscovery`、`tool-fs.applyPatch` 等配置同上游默认） |
+
+### 上游对齐记录
+
+当前对齐到 **dsh 0.2.2**。输入是装机自带的 `@deepseek-ai/dsh-web-app/presets/ptc.patch.yml`
+（`insert[0].config.plugins`），本包 26 个顶层行 = 官方 24 行 + 本包 2 个本地行。
+
+0.2.2 相对 0.2.1 的行/配置变化（本次已全部跟进）：
+
+| 变化 | 处理 |
+|---|---|
+| 新增 `tool-executor-ptc`、`tool-office` | 补齐 |
+| 移除 `tool-presentation`（PTC 声明并入 executor） | 删除该行 |
+| 移除 `tool-subagent-control/list-agents` 子路径（`list_agents` 并入主入口） | 删除该行 |
+| `tool-fs.applyPatch`、`tool-subagent-control.interrupt` 新配置 | 补 `false` |
+| `tool-subagent` 的 `modelSelectionSettings` → `modelSelection` + `modelDiscovery` | 改名并补齐 |
+
+**事故记录（2026-11-24）**：预设曾长期保留 `tool-subagent-list-agents` 行。0.2.2 删掉该子路径后，这一行
+**永远起不来**，整份预设组合失败，于是「最后选择的预设 = `ptc-bash`」的会话全部 resume 失败；UI 上的表现是
+标签页标题回落成 `session-<uuid>`、侧栏行随后消失（会话数据与日志本身完好）。当时的
+`composition-health` 门禁只校验「包目录里存在 package.json」，看不到子路径，因此没有拦住。
+现在 `moduleProblem()` 用装机自带解析器解析**完整 specifier**，并对 `ERR_PACKAGE_PATH_NOT_EXPORTED`
+单独给文案，另加了一条把该事故固化的回归用例。
+
+派生工具 `tools/derive-preset.mjs` 只从官方 patch 产出**裸行**（不含注释）：改行时把它输出到 `PTC_BASH_PRESET_DIR`
+指向的临时目录，再按行差异手工合并回这份带注释的文件；`npm test` 的 `differs from the shipped ptc preset only by
+the rows this package adds` 用装机注册表复核这半边的结果。
 
 ### bash 工具（dsh-bash-win）配置与结果契约
 

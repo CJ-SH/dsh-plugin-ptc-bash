@@ -30,8 +30,9 @@ const OFFICIAL_TOP_LEVEL_ROWS = [
   'tool-ask-user',
   'tool-todo',
   'tool-web',
-  'tool-presentation',
+  'tool-executor-ptc',
   'present',
+  'tool-office',
   'tool-plugin-manager',
   'tool-plugin-market',
 ]
@@ -70,11 +71,15 @@ describe('presets/ptc-bash', () => {
     assert.match(composition, /^- id: dsh-bash-win\n  name: \.\/dsh-bash-win\.mjs\n  disabled: !!js process\.platform !== 'win32'$/m)
   })
 
-  it('declares PTC once and stays free of the anchor-turn machinery', () => {
-    assert.match(composition, /- id: tool-presentation\n  name: '@deepseek-ai\/dsh-agent-tool-presentation'\n  config:\n    mode: ptc\n/)
+  it('declares PTC once through the executor row and stays free of the anchor-turn machinery', () => {
+    // 0.2.2 folded the old `tool-presentation` row into `tool-executor-ptc`: the executor
+    // registers `run_code`, so PTC no longer arrives as a `mode: ptc` declaration, and two
+    // rows would register the surface twice.
+    assert.match(composition, /^- id: tool-executor-ptc\n  name: '@deepseek-ai\/dsh-tool-executor-ptc'$/m)
+    assert.ok(!composition.includes('@deepseek-ai/dsh-agent-tool-presentation'))
+    assert.ok(!composition.includes('mode: ptc'))
     assert.ok(!composition.includes('tool-catalog'))
     assert.ok(!composition.includes('str_replace_editor'))
-    assert.equal(composition.match(/mode: ptc/g).length, 1)
   })
 
   it('routes workspace instructions through the system prompt', () => {
@@ -90,6 +95,10 @@ describe('presets/ptc-bash', () => {
     // only the text half, and it cannot tell a rename from a typo.
     assert.ok(!composition.includes('workflow-worker-thread'))
     assert.ok(!composition.includes('dsh-tool-ptc'))
+    // 0.2.2 stopped exporting the `tool-subagent-control/list-agents` subpath: the row that
+    // named it outlived its target and failed the whole preset at mount. `list_agents`
+    // registers from the `tool-subagent-control` row itself now.
+    assert.ok(!/^\s*- id: tool-subagent-list-agents$/m.test(composition))
   })
 
   it('keeps the orchestration rows disabled exactly as upstream ptc does', () => {

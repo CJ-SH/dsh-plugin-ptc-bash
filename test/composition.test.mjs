@@ -132,7 +132,7 @@ describe('parseYaml', () => {
 describe('parseComposition', () => {
   it('reads the shipped composition, blocks scalar and gates included', () => {
     const rows = parseComposition(composition)
-    assert.equal(rows.length, 25)
+    assert.equal(rows.length, 26)
     assert.equal(rows[0].id, 'persona')
     assert.deepEqual(rows.find((row) => row.id === 'dsh-bash-win').disabled, { __jsExpr: "process.platform !== 'win32'" })
     const planning = rows.find((row) => row.id === 'planning')
@@ -174,7 +174,11 @@ describe('validateComposition', () => {
 
   it('reports a name scalar that no longer reads back', () => {
     const broken = composition.replace("name: '@deepseek-ai/dsh-persona'", "name: '@deepseek-ai/dsh-persona")
-    assert.match(validateComposition(broken)[0], /^line 33: a single-quoted scalar never closes$/)
+    assert.notEqual(broken, composition, 'the mutation landed')
+    // Derived, not pinned: the message names the line the broken scalar starts on, and a
+    // pinned number drifts with every comment added above that row.
+    const line = broken.split('\n').findIndex((text) => text.includes("name: '@deepseek-ai/dsh-persona")) + 1
+    assert.match(validateComposition(broken)[0], new RegExp('^line ' + line + ': a single-quoted scalar never closes$'))
   })
 
   it('leaves package resolution to the installed registry', () => {

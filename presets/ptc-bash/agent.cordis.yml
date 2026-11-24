@@ -13,8 +13,9 @@
 #   3. this header.
 #
 # The "anchor turn" of the mode this was derived from is deliberately absent:
-# `tool-presentation` declares PTC for the whole session, so the first turn already runs
-# on `run_code` + the generated SDK, and no durable tool catalog is injected.
+# `tool-executor-ptc` registers `run_code` + the PTC-only prompt section for the whole
+# session, so the first turn already runs on `run_code` and no durable tool catalog is
+# injected (0.2.2 folded the older `tool-presentation` row into that executor).
 #
 # Windows keeps `pwsh` mounted as the fallback shell - it is the only file-sandboxed
 # shell there. The preference for bash is expressed on the bash side (its tool
@@ -87,6 +88,9 @@
 # they need no realm. The `fs` service and its policy stay in the host.
 - id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
+  config:
+    # Set true to add the apply_patch tool beside edit.
+    applyPatch: false
 
 - id: tool-fs-search
   name: '@deepseek-ai/dsh-tool-fs-search'
@@ -209,18 +213,24 @@
   isolate:
     workflowEngine: true
   config:
+    # 0.2.2 folded the old `tool-subagent-control/list-agents` subpath row into this
+    # entry: `list_agents` registers here now, and a separate row for that subpath can
+    # no longer start. `interrupt` gates only `interrupt_agent`; the messaging and
+    # discovery tools stay either way.
     - id: tool-subagent-control
       name: '@deepseek-ai/dsh-tool-subagent-control'
-
-    - id: tool-subagent-list-agents
-      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+      config:
+        interrupt: false
 
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: subagent
-        modelSelectionSettings: true
+        # 0.2.2 replaced the single `modelSelectionSettings` flag with these two:
+        # the model picker itself, and the `list_subagent_models` discovery tool.
+        modelSelection: true
+        modelDiscovery: true
 
     # Fork omits model selection so provider/model stay equal to the parent and
     # the inherited history remains eligible for KV Cache reuse; parent and child
@@ -266,16 +276,20 @@
 
 # ── presentation ────────────────────────────────────────────────────────────
 
-# PTC mode for this agent alone. The row waits for the host's `ptcRuntime`
-# rather than assuming it: a deployment that composes no TypeScript runtime
-# fails this preset at mount, naming this id, instead of at the first request.
-- id: tool-presentation
-  name: '@deepseek-ai/dsh-agent-tool-presentation'
-  config:
-    mode: ptc
+# PTC for this agent alone: this row registers `run_code` plus the PTC-only prompt
+# section, and it waits for the host's `ptcRuntime` rather than assuming it - so a
+# deployment that composes no TypeScript runtime fails this preset at mount, naming
+# this id, instead of at the first request. 0.2.2 folded the older
+# `tool-presentation` row into this executor.
+- id: tool-executor-ptc
+  name: '@deepseek-ai/dsh-tool-executor-ptc'
 
 - id: present
   name: '@deepseek-ai/dsh-tool-present'
+
+# Upstream 0.2.2 row: the Office document tools, in the shipped order.
+- id: tool-office
+  name: '@deepseek-ai/dsh-tool-office'
 
 - id: tool-plugin-manager
   name: '@deepseek-ai/dsh-plugin-manager/tools'

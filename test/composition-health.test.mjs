@@ -153,10 +153,26 @@ function moduleProblem(name, installed) {
   }
   const bare = bareName(name)
   if (bare === undefined) return 'is neither a package nor a file URL: ' + name
-  for (const directory of installed.require.resolve.paths(bare) ?? []) {
-    if (existsSync(join(directory, ...bare.split('/'), 'package.json'))) return undefined
+  const directories = installed.require.resolve.paths(bare) ?? []
+  const installedAt = directories.find((directory) =>
+    existsSync(join(directory, ...bare.split('/'), 'package.json')))
+  if (installedAt === undefined) return 'names a plugin that cannot be resolved: ' + name
+  // The package being installed says nothing about the entry a row names. 0.2.2 kept
+  // `dsh-tool-subagent-control` but dropped its `./list-agents` subpath, and the row that
+  // still named it failed the whole preset at mount ("never started"). Resolve the exact
+  // specifier the row carries, not just its package.
+  try {
+    installed.require.resolve(name, { paths: directories })
+    return undefined
+  } catch (error) {
+    if (error?.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
+      return 'names a subpath its package does not export: ' + name
+    }
+    if (error?.code === 'ERR_MODULE_NOT_FOUND' || error?.code === 'MODULE_NOT_FOUND') {
+      return 'names a plugin that cannot be resolved: ' + name
+    }
+    return 'cannot be resolved by the install (' + String(error?.code ?? error) + '): ' + name
   }
-  return 'names a plugin that cannot be resolved: ' + name
 }
 
 /**
@@ -255,6 +271,15 @@ describe('presets/ptc-bash as the installed harness reads it', () => {
     assert.match(
       rowProblems(removed, found).join('\n'),
       /row "workflow-ptc" names a plugin that cannot be resolved: @deepseek-ai\/dsh-agent-presets/,
+    )
+
+    // 0.2.2 kept the package and dropped the `./list-agents` subpath its row named. The
+    // bare-package lookup this guard used to do could not see that, which is exactly how
+    // the row shipped green and then broke every session that selected this preset.
+    const obsolete = renameRow(rows, 'tool-subagent-control', '@deepseek-ai/dsh-tool-subagent-control/list-agents')
+    assert.match(
+      rowProblems(obsolete, found).join('\n'),
+      /row "tool-subagent-control" names a subpath its package does not export: @deepseek-ai\/dsh-tool-subagent-control\/list-agents/,
     )
 
     // A local row whose file is gone: the failure the file-URL rewrite can produce.
